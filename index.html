@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI Dongle</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    margin: 0; padding: 1.5rem; max-width: 820px; margin-inline: auto;
+    background: #f6f7f9; color: #1a1a1a;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+  .sub { color: #888; margin: 0 0 1.25rem; }
+  section, details { background: #fff; border: 1px solid #e2e4e8; border-radius: 10px; padding: 1rem 1.1rem; margin-bottom: 1rem; }
+  h2 { font-size: 1rem; margin: 0 0 .7rem; }
+  label { display: block; font-size: .8rem; color: #888; margin-bottom: .15rem; }
+  input, select, textarea { padding: .5rem .6rem; border: 1px solid #ccd; border-radius: 7px; width: 100%; font: inherit; }
+  textarea { resize: vertical; min-height: 3rem; }
+  button { padding: .5rem .85rem; border: 1px solid #c2c7d0; border-radius: 7px; background: #fff; color: #1a1a1a; cursor: pointer; font: inherit; font-weight: 500; }
+  button:hover { background: #eef1f5; }
+  button.primary { background: #2f6feb; color: #fff; border-color: #2f6feb; }
+  button.primary:hover { background: #2861d8; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: .6rem; flex-wrap: wrap; align-items: end; }
+  .row > div { flex: 1; min-width: 120px; }
+  .row > button { flex: 0 0 auto; }
+  .status-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #c33; margin-right: .4rem; vertical-align: middle; }
+  .status-dot.on { background: #2ea043; }
+  table { width: 100%; border-collapse: collapse; margin-top: .6rem; }
+  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid #eee; font-size: .9rem; }
+  th { color: #888; font-weight: 500; }
+  .log { background: #0d1117; color: #b9c2cf; border: 1px solid #e2e4e8; border-radius: 10px; padding: .8rem; height: 170px; overflow-y: auto; white-space: pre-wrap; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .log .tx { color: #7ee787; } .log .rx { color: #b9c2cf; } .log .err { color: #ff7b72; } .log .dbg { color: #6e7681; }
+  .muted { color: #888; font-size: .85rem; }
+  .toolbar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: 1.1rem; }
+  .banner { padding: .6rem .8rem; border-radius: 8px; margin-bottom: 1rem; font-size: .9rem; }
+  .banner.ok { background: #e7f6ec; border: 1px solid #b6e2c4; color: #1a7f3c; }
+  .banner.warn { background: #fdf3e2; border: 1px solid #f0d9a8; color: #9a6b16; }
+  /* Dark-mode overrides last, so they win the cascade over the base rules. */
+  @media (prefers-color-scheme: dark) {
+    body { background: #16181d; color: #e6e6e6; }
+    section, details { background: #1f2229; border-color: #333; }
+    input, select, textarea { background: #262a33; color: #e6e6e6; border-color: #3a3f4a; }
+    button { background: #30353f; color: #e6e6e6; border-color: #464c58; }
+    button:hover { background: #3a4150; }
+    button.primary { background: #2f6feb; color: #fff; border-color: #2f6feb; }
+    th, td { border-color: #333; }
+    .banner.ok { background: #10261a; border-color: #1f6b3a; color: #6fdc95; }
+    .banner.warn { background: #2a2312; border-color: #6b551f; color: #e5c46f; }
+  }
+  code { font: 12.5px ui-monospace, Menlo, monospace; background: rgba(128,128,128,.15); padding: .05rem .3rem; border-radius: 4px; }
+  details summary { cursor: pointer; font-weight: 600; }
+  details[open] summary { margin-bottom: .6rem; }
+  .cmd-list { margin: .2rem 0 0; padding-left: 1.1rem; }
+  .cmd-list li { margin: .15rem 0; }
+</style>
+</head>
+<body>
+  <h1>CLI Dongle</h1>
+  <p class="sub">Configure macros, key remaps, and saved settings over WebSerial.</p>
+
+  <div class="toolbar">
+    <button id="connect" class="primary">Connect</button>
+    <span><span id="dot" class="status-dot"></span><span id="conn">Not connected</span></span>
+  </div>
+
+  <div id="banner"></div>
+
+  <!-- Client UI (loaded per firmware version) mounts here -->
+  <div id="app"></div>
+
+  <details id="help">
+    <summary>Help</summary>
+    <p>The dongle sits between your keyboard and computer. On the keyboard,
+      press the trigger <b>Ctrl, Shift, Ctrl</b>, type a command, and press
+      Enter (ESC aborts). The same commands work here — type them in the
+      console, or use the buttons above.</p>
+    <ul class="cmd-list">
+      <li><code>macro,&lt;name&gt;,&lt;text&gt;</code> — define a macro; type <code>&lt;name&gt;</code>+Enter on the keyboard to expand it</li>
+      <li><code>macro,list</code> · <code>macro,delete,&lt;name&gt;</code> · <code>macro,clear</code></li>
+      <li><code>remap,&lt;from&gt;,&lt;to&gt;</code> — e.g. <code>remap,CapsLock,Escape</code></li>
+      <li><code>remap,list</code> · <code>remap,delete,&lt;key&gt;</code> · <code>remap,clear</code></li>
+      <li><code>wifi,scan</code> · <code>wifi,list</code> · <code>wifi,status</code> · <code>wifi,add,&lt;ssid&gt;,&lt;pw&gt;</code> · <code>wifi,connect,&lt;ssid&gt;</code> · <code>wifi,forget,&lt;ssid&gt;</code></li>
+      <li><code>pw,&lt;service&gt;[,u|up]</code> — type a saved credential (prompts for the master on the keyboard) · <code>pw,lock</code></li>
+      <li><code>ai,&lt;question&gt;</code> — ask Gemini; the answer is typed out · <code>ai,key,&lt;k&gt;</code> · <code>ai,status</code></li>
+      <li><code>ait,add,&lt;name&gt;,&lt;system prompt&gt;</code> — a template · <code>ait,use,&lt;name&gt;</code> (active) · <code>ait,&lt;name&gt;,&lt;question&gt;</code> (one-off) · <code>ait,list</code> · <code>ait,none</code> · <code>ait,delete,&lt;name&gt;</code></li>
+      <li><code>aimodel,add,&lt;name&gt;[,&lt;url&gt;]</code> — a model (blank URL = Gemini) · <code>aimodel,use,&lt;name&gt;</code> · <code>aimodel,list</code> · <code>aimodel,delete,&lt;name&gt;</code></li>
+      <li><code>note,add,&lt;name&gt;,&lt;text&gt;</code> — save a note (duplicate names get a -2, -3… suffix) · <code>note,view,&lt;name&gt;</code> (types it) · <code>note,edit</code> · <code>note,delete</code> · <code>note,list</code>. The Notes panel above does multi-line notes + view/edit.</li>
+      <li><code>config,save</code> — persist to flash (restored on boot) · <code>config,load</code> · <code>config,reset</code></li>
+      <li><b>Backup</b> — the Config panel's <b>Export</b> / <b>Import</b> buttons save/restore <em>all</em> settings (a versioned <code>.conf</code> file; it contains your WiFi passwords and API key in the clear)</li>
+      <li><code>help</code> — command reference on the device</li>
+    </ul>
+    <p class="muted">On the keyboard, <b>Ctrl,Shift,Ctrl</b> then Enter (no command) opens an
+      interactive menu — do that in an empty editor.</p>
+    <p class="muted">Web Serial needs Chrome or Edge served from <code>localhost</code> or
+      <code>https</code>: run <code>python3 -m http.server</code> in this folder and open
+      <code>http://localhost:8000/</code>.</p>
+  </details>
+
+  <p id="unsupported" class="muted" hidden>
+    This browser has no Web Serial API. Use Chrome or Edge over <code>localhost</code>/<code>https</code>.
+  </p>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+// Firmware protocol version -> client module. Add an entry per breaking proto.
+const CLIENTS = { 1: "client-v1.js" };
+
+let port = null, writer = null, reader = null, rxBuffer = "", waiters = [], lineHooks = [];
+
+function logLine(text, cls) {
+  const app = window.CLID && window.CLID._logEl;
+  if (!app) { console.log(text); return; }
+  const span = document.createElement("span");
+  span.className = cls || "rx";
+  span.textContent = text + "\n";
+  app.appendChild(span);
+  app.scrollTop = app.scrollHeight;
+}
+
+async function connect() {
+  if (!("serial" in navigator)) { $("unsupported").hidden = false; return; }
+  if (port) { return disconnect(); }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    writer = port.writable.getWriter();
+    readLoop();
+    $("dot").classList.add("on");
+    $("conn").textContent = "Connected";
+    $("connect").textContent = "Disconnect";
+
+    const resp = await sendCommand("CMD:VERSION");
+    handshake(resp[0] || "");
+  } catch (e) {
+    banner("warn", "Connection failed: " + e.message);
+  }
+}
+
+async function disconnect() {
+  try {
+    if (reader) { await reader.cancel(); reader = null; }
+    if (writer) { writer.releaseLock(); writer = null; }
+    if (port) { await port.close(); port = null; }
+  } catch (_) {}
+  $("dot").classList.remove("on");
+  $("conn").textContent = "Not connected";
+  $("connect").textContent = "Connect";
+  $("app").innerHTML = "";
+  $("banner").innerHTML = "";
+  window.CLID = null;
+}
+
+function banner(kind, html) {
+  $("banner").innerHTML = `<div class="banner ${kind}">${html}</div>`;
+}
+
+function handshake(versionLine) {
+  // OK:VERSION,<fw>,<chip>,<board>,<proto>,<has_wifi>
+  const p = versionLine.split(",");
+  const fw = p[1] || "?", chip = p[2] || "?", board = p[3] || "?";
+  const proto = parseInt(p[4] || "0", 10);
+  const hasWifi = p[5] === undefined ? true : p[5] === "1";   // older fw: assume wifi
+  const clientFile = CLIENTS[proto];
+
+  window.CLID = { sendCommand, fw, chip, board, proto, hasWifi, log: logLine,
+                  onLine: (fn) => lineHooks.push(fn) };
+
+  if (!versionLine.startsWith("OK:VERSION")) {
+    banner("warn", "Connected, but the device did not report a version. Is this a CLI Dongle?");
+    return;
+  }
+  if (!clientFile) {
+    banner("warn", `Connected to firmware <b>${fw}</b> (protocol ${proto}), but this page only supports protocol(s) ${Object.keys(CLIENTS).join(", ")}. Please update this page.`);
+    return;
+  }
+  banner("ok", `Connected — firmware <b>${fw}</b> · ${board}/${chip} · protocol ${proto} (matched).`);
+  const s = document.createElement("script");
+  s.src = clientFile + "?v=" + proto;
+  s.onerror = () => banner("warn", "Failed to load client module " + clientFile);
+  document.body.appendChild(s);
+}
+
+// Line reader: dispatch protocol lines to the pending command's collector.
+async function readLoop() {
+  const decoder = new TextDecoder();
+  reader = port.readable.getReader();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      rxBuffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = rxBuffer.indexOf("\n")) >= 0) {
+        const line = rxBuffer.slice(0, nl).replace(/\r$/, "");
+        rxBuffer = rxBuffer.slice(nl + 1);
+        if (line.startsWith("[")) { logLine(line, "dbg"); continue; }  // device debug
+        logLine(line, line.startsWith("ERR:") ? "err" : "rx");
+        if (waiters.length) waiters[0].onLine(line);
+        for (const h of lineHooks) h(line);   // async listeners (e.g. AI answers)
+      }
+    }
+  } catch (_) { /* cancelled */ }
+  finally { try { reader.releaseLock(); } catch (_) {} }
+}
+
+// Send a command; resolve with its response lines. Lists (OK:MACROS/REMAPS/
+// STATUS/HELP) run until END; single responses end at the first OK:/ERR:.
+function sendCommand(cmd) {
+  logLine("> " + cmd, "tx");
+  const bytes = new TextEncoder().encode(cmd + "\n");
+  return new Promise((resolve) => {
+    const lines = [];
+    let expectEnd = false, settled = false;
+    const timer = setTimeout(finish, 2500);
+    function finish() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      waiters.shift();
+      resolve(lines);
+    }
+    waiters.push({ onLine: (line) => {
+      lines.push(line);
+      if (/^OK:(MACROS|REMAPS|STATUS|HELP|WIFILIST|WIFISCAN|PWLIST|AITLIST|AITGET|AIMODELLIST|NOTELIST|NOTEGET|RECLIST|EXPORT)\b/.test(line)) expectEnd = true;
+      else if (expectEnd) { if (line === "END") finish(); }
+      else if (line.startsWith("OK:") || line.startsWith("ERR:")) finish();
+    }});
+    writer.write(bytes);
+  });
+}
+
+$("connect").onclick = connect;
+if (!("serial" in navigator)) { $("unsupported").hidden = false; $("connect").disabled = true; }
+</script>
+</body>
+</html>

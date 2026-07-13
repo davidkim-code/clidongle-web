@@ -64,6 +64,7 @@
 
   <div class="toolbar">
     <button id="connect" class="primary">Connect</button>
+    <button id="restart" hidden title="Reboot the dongle — recovers the keyboard if it stops passing through">⟳ Restart dongle</button>
     <span><span id="dot" class="status-dot"></span><span id="conn">Not connected</span></span>
   </div>
 
@@ -135,6 +136,7 @@ async function connect() {
     $("dot").classList.add("on");
     $("conn").textContent = "Connected";
     $("connect").textContent = "Disconnect";
+    $("restart").hidden = false;
 
     const resp = await sendCommand("CMD:VERSION");
     handshake(resp[0] || "");
@@ -152,6 +154,7 @@ async function disconnect() {
   $("dot").classList.remove("on");
   $("conn").textContent = "Not connected";
   $("connect").textContent = "Connect";
+  $("restart").hidden = true;
   $("app").innerHTML = "";
   $("banner").innerHTML = "";
   window.CLID = null;
@@ -237,6 +240,20 @@ function sendCommand(cmd) {
 }
 
 $("connect").onclick = connect;
+
+// Restart the dongle (recovers a wedged USB host, e.g. after a shared-receiver
+// mouse toggle). Fire-and-forget: the device acks then reboots ~50ms later and
+// the port drops, so we don't wait on a response — we tear down and prompt a
+// reconnect. Raw write (not sendCommand) avoids leaving a stale command waiter.
+$("restart").onclick = () => {
+  if (!port || !writer) return;
+  if (!confirm("Restart the dongle now?\n\nThis reboots the device and drops this connection — reconnect in a few seconds. Handy if the keyboard stops passing through (e.g. after toggling a wireless mouse on the same receiver).")) return;
+  logLine("> CMD:REBOOT", "tx");
+  try { writer.write(new TextEncoder().encode("CMD:REBOOT\n")); } catch (_) {}
+  banner("warn", "Restarting the dongle…");
+  setTimeout(() => { disconnect(); banner("ok", "Dongle restarted — click <b>Connect</b> to reconnect."); }, 1300);
+};
+
 if (!("serial" in navigator)) { $("unsupported").hidden = false; $("connect").disabled = true; }
 </script>
 </body>

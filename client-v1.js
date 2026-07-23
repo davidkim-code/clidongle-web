@@ -180,6 +180,12 @@
       </div>
     </section>
     <section>
+      <h2>Storage <button id="st-refresh" style="float:right">Refresh</button></h2>
+      <div id="st-meters"></div>
+      <p id="st-note" class="muted" hidden></p>
+      <p class="muted">Each store has a fixed number of slots; the meters show how full each is. Unlock the vault to see password usage.</p>
+    </section>
+    <section>
       <h2>Config</h2>
       <div class="row">
         <button id="c-save" class="primary">Save to flash</button>
@@ -629,6 +635,7 @@
       tb.appendChild(tr);
     }
     $("note-empty").hidden = rows.length > 0;
+    refreshStorage();
   }
   $("note-add").onclick = async () => {
     const n = $("note-name").value.trim(), b = $("note-body").value;
@@ -654,6 +661,7 @@
     $("pw-master-row").hidden = unlocked;
     $("pw-manage").hidden = !unlocked;
     if (unlocked) refreshPwList();
+    refreshStorage();
   }
   async function refreshPwList() {
     const rows = dataLines(await send("CMD:PW_LIST"));
@@ -791,10 +799,52 @@
     await send("CMD:CONFIG_SAVE");
     refreshMacros(); refreshRemaps(); refreshWifi();
     refreshAI(); refreshTemplates(); refreshModels();
+    refreshNotes(); refreshPw(); refreshStorage();
     alert(`Imported ${lines.length} settings.`);
   };
   $("raw-send").onclick = () => { const v = $("raw").value.trim(); if (v) send(v); };
   $("raw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("raw-send").click(); });
+
+  // --- Storage meters ---  (OK:STORAGE,pw=<u>/<m>,notes=<u>/<m>,...)
+  async function refreshStorage() {
+    const st = (await send("CMD:STORAGE"))[0] || "";
+    const host = $("st-meters"), note = $("st-note");
+    if (!st.startsWith("OK:STORAGE")) {
+      host.innerHTML = "<p class='muted'>Storage info needs newer firmware.</p>";
+      note.hidden = true; return;
+    }
+    const LABELS = { pw: "Passwords", notes: "Notes", wifi: "WiFi networks",
+      tpl: "AI templates", models: "AI models", macros: "Macros",
+      remaps: "Key remaps", rec: "Recorded macros" };
+    host.innerHTML = "";
+    let anyFull = false, anyWarn = false;
+    for (const seg of st.slice(11).split(",")) {          // 11 = "OK:STORAGE,".length
+      const eq = seg.indexOf("=");
+      if (eq < 0) continue;
+      const key = seg.slice(0, eq), sl = seg.slice(eq + 1).split("/");
+      if (key === "wifi" && CLID.hasWifi === false) continue;   // no radio on this board
+      const max = parseInt(sl[1], 10) || 0;
+      const locked = sl[0] === "locked";
+      const used = locked ? 0 : (parseInt(sl[0], 10) || 0);
+      const pct = max ? Math.min(100, Math.round(used / max * 100)) : 0;
+      const isFull = !locked && max > 0 && used >= max;
+      const isWarn = !locked && !isFull && pct >= 80;
+      if (isFull) anyFull = true; else if (isWarn) anyWarn = true;
+      const cls = isFull ? " full" : (isWarn ? " warn" : "");
+      const div = document.createElement("div");
+      div.className = "meter" + (locked ? " locked" : "");
+      div.innerHTML =
+        '<div class="meter-top"><span class="meter-label"></span><span class="meter-val"></span></div>' +
+        '<div class="meter-bar"><div class="meter-fill' + cls + '" style="width:' + (locked ? 0 : pct) + '%"></div></div>';
+      div.querySelector(".meter-label").textContent = LABELS[key] || key;
+      div.querySelector(".meter-val").textContent = locked ? "🔒 unlock to view" : (used + " / " + max);
+      host.appendChild(div);
+    }
+    if (anyFull) { note.textContent = "⚠ A store is full — delete entries or export a backup before adding more."; note.hidden = false; }
+    else if (anyWarn) { note.textContent = "Some stores are getting full."; note.hidden = false; }
+    else note.hidden = true;
+  }
+  $("st-refresh").onclick = refreshStorage;
 
   refreshMacros();
   refreshRemaps();

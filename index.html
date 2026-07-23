@@ -50,12 +50,21 @@
     th, td { border-color: #333; }
     .banner.ok { background: #10261a; border-color: #1f6b3a; color: #6fdc95; }
     .banner.warn { background: #2a2312; border-color: #6b551f; color: #e5c46f; }
+    .meter-bar { background: #2a2f38; }
   }
   code { font: 12.5px ui-monospace, Menlo, monospace; background: rgba(128,128,128,.15); padding: .05rem .3rem; border-radius: 4px; }
   details summary { cursor: pointer; font-weight: 600; }
   details[open] summary { margin-bottom: .6rem; }
   .cmd-list { margin: .2rem 0 0; padding-left: 1.1rem; }
   .cmd-list li { margin: .15rem 0; }
+  .meter { margin: .5rem 0; }
+  .meter-top { display: flex; justify-content: space-between; font-size: .85rem; margin-bottom: .2rem; }
+  .meter-val { color: #888; font-variant-numeric: tabular-nums; }
+  .meter.locked .meter-val { font-style: italic; }
+  .meter-bar { height: 8px; background: #e7e9ee; border-radius: 5px; overflow: hidden; }
+  .meter-fill { height: 100%; width: 0; background: #2f6feb; border-radius: 5px; transition: width .3s ease; }
+  .meter-fill.warn { background: #d99a2b; }
+  .meter-fill.full { background: #d64a44; }
 </style>
 </head>
 <body>

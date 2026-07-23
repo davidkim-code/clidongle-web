@@ -359,6 +359,16 @@
     $("ai-chat").scrollTop = $("ai-chat").scrollHeight;
     return div;
   }
+  // A subtle system line in the chat (not a user/AI turn, never recorded).
+  function appendNote(text) {
+    const div = document.createElement("div");
+    div.className = "muted";
+    div.style.fontSize = ".8rem";
+    div.style.margin = ".15rem 0";
+    div.textContent = text;
+    $("ai-chat").appendChild(div);
+    $("ai-chat").scrollTop = $("ai-chat").scrollHeight;
+  }
 
   // Conversation history for continued chats. Each turn: {role:"user"|"model", text}.
   let chatTurns = [], pendingQ = "";
@@ -366,12 +376,40 @@
     chatTurns.push({ role: "user", text: q }, { role: "model", text: ans });
     while (chatTurns.length > 20) chatTurns.shift();   // cap so the prompt stays small
   }
-  // Build the prompt: prepend the conversation transcript as context when
-  // "Continue conversation" is on, so the model has the running history.
+  // Device mode ships the whole transcript to the dongle, whose prompt/request
+  // buffers are 8 KB (WS_AI_MAX / REQ_MAX); after JSON-escaping + the HTTP
+  // wrapper the usable prompt is ~6-7 KB. So in device mode we trim the oldest
+  // turns to a safe raw budget, always keeping the newest question. Browser
+  // mode calls Gemini directly and has no such limit — send the full history.
+  const DEVICE_PROMPT_BUDGET = 6000;             // bytes of raw prompt (pre-escape)
+  const _enc = new TextEncoder();
+  const byteLen = (s) => _enc.encode(s).length;
+  const turnLine = (x) => (x.role === "user" ? "User" : "AI") + ": " + x.text;
+  let lastCtxTrimmed = false;                     // set by buildPrompt when it drops turns
+
+  // Prepend the conversation transcript as context when "Continue conversation"
+  // is on, so the model has the running history.
   function buildPrompt(q) {
+    lastCtxTrimmed = false;
     if (!$("ai-continue").checked || chatTurns.length === 0) return q;
-    const t = chatTurns.map((x) => (x.role === "user" ? "User" : "AI") + ": " + x.text).join("\n");
-    return "Ongoing conversation — continue it.\n\n" + t + "\nUser: " + q;
+    const head = "Ongoing conversation — continue it.\n\n";
+    const tail = "\nUser: " + q;
+
+    let turns = chatTurns;
+    if ($("ai-via").value !== "browser") {         // device mode: fit the dongle's buffer
+      const budget = DEVICE_PROMPT_BUDGET - byteLen(head) - byteLen(tail);
+      const kept = [];
+      let used = 0;
+      for (let i = chatTurns.length - 1; i >= 0; i--) {
+        const cost = byteLen(turnLine(chatTurns[i])) + 1;   // +1 for the joining newline
+        if (used + cost > budget) { lastCtxTrimmed = true; break; }
+        used += cost;
+        kept.unshift(chatTurns[i]);
+      }
+      if (kept.length === 0) return q;             // nothing fits (huge question) — send it alone
+      turns = kept;
+    }
+    return head + turns.map(turnLine).join("\n") + tail;
   }
 
   let aiTimeout = 30, aiModelName = "gemini-2.5-flash";
@@ -485,6 +523,9 @@
     if (!q) return;
     $("ai-prompt").value = "";
     appendChat("you", q);
+    const prompt = buildPrompt(q);                           // adds context; trims it in device mode
+    if (lastCtxTrimmed)
+      appendNote("⚠ Older context trimmed to fit Device mode (~6 KB). Switch “Ask via” to Browser to keep the full history.");
     pendingQ = q;
     aiPending = appendChat("ai", "");
     let left = aiTimeout;
@@ -492,7 +533,6 @@
     tick();
     stopTimer();
     aiTimer = setInterval(() => { left = Math.max(0, left - 1); tick(); }, 1000);
-    const prompt = buildPrompt(q);                           // adds conversation context if continuing
     if ($("ai-via").value === "browser") askBrowser(prompt);
     else send("CMD:AI_ASK," + esc(prompt));                  // escaped: multi-turn context has newlines
   }

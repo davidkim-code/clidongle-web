@@ -775,8 +775,13 @@
   $("r-refresh").onclick = refreshRemaps;
   $("c-save").onclick = () => send("CMD:CONFIG_SAVE");
   $("c-load").onclick = async () => { await send("CMD:CONFIG_LOAD"); refreshMacros(); refreshRemaps(); };
-  $("c-reset").onclick = async () => {
-    if (confirm("Erase all saved macros and remaps?")) { await send("CMD:CONFIG_RESET"); refreshMacros(); refreshRemaps(); }
+  $("c-reset").onclick = () => {
+    if (!confirm("Factory reset — erase EVERYTHING on the dongle?\n\n" +
+      "Macros, remaps, the password vault, saved WiFi, the AI key + templates + models, " +
+      "notes, and recordings will all be wiped, and the dongle reboots. This cannot be undone.")) return;
+    send("CMD:FACTORY_RESET");
+    banner("warn", "Factory-resetting and rebooting the dongle…");
+    setTimeout(() => { disconnect(); banner("ok", "Factory reset complete — click <b>Connect</b> to reconnect to a clean device."); }, 1800);
   };
   $("c-reboot").onclick = () => send("CMD:REBOOT");
   $("c-export").onclick = async () => {

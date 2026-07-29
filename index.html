@@ -120,7 +120,7 @@
 const $ = (id) => document.getElementById(id);
 
 // Firmware protocol version -> client module. Add an entry per breaking proto.
-const CLIENTS = { 1: "client-v1.js" };
+const CLIENTS = { 1: "client-v1.js", 2: "client-v2.js" };
 
 let port = null, writer = null, reader = null, rxBuffer = "", waiters = [], lineHooks = [];
 
@@ -174,15 +174,20 @@ function banner(kind, html) {
 }
 
 function handshake(versionLine) {
-  // OK:VERSION,<fw>,<chip>,<board>,<proto>,<has_wifi>
+  // Proto 1: OK:VERSION,<fw>,<chip>,<board>,<proto>,<has_wifi>
+  // Proto 2 adds fixed trailing fields: <has_bt>,<has_midi>,<input_mode>;
+  // absent trailing fields mean proto 1 defaults (doc 04 §2).
   const p = versionLine.split(",");
   const fw = p[1] || "?", chip = p[2] || "?", board = p[3] || "?";
   const proto = parseInt(p[4] || "0", 10);
   const hasWifi = p[5] === undefined ? true : p[5] === "1";   // older fw: assume wifi
+  const hasBt = p[6] === "1";
+  const hasMidi = p[7] === "1";
+  const inputMode = p[8] || "keyboard";
   const clientFile = CLIENTS[proto];
 
-  window.CLID = { sendCommand, fw, chip, board, proto, hasWifi, log: logLine,
-                  onLine: (fn) => lineHooks.push(fn) };
+  window.CLID = { sendCommand, fw, chip, board, proto, hasWifi, hasBt, hasMidi,
+                  inputMode, log: logLine, onLine: (fn) => lineHooks.push(fn) };
 
   if (!versionLine.startsWith("OK:VERSION")) {
     banner("warn", "Connected, but the device did not report a version. Is this a CLI Dongle?");
@@ -240,7 +245,7 @@ function sendCommand(cmd) {
     }
     waiters.push({ onLine: (line) => {
       lines.push(line);
-      if (/^OK:(MACROS|REMAPS|STATUS|HELP|WIFILIST|WIFISCAN|PWLIST|AITLIST|AITGET|AIMODELLIST|NOTELIST|NOTEGET|RECLIST|EXPORT)\b/.test(line)) expectEnd = true;
+      if (/^OK:(MACROS|REMAPS|STATUS|HELP|WIFILIST|WIFISCAN|PWLIST|AITLIST|AITGET|AIMODELLIST|NOTELIST|NOTEGET|RECLIST|EXPORT|BTLIST)\b/.test(line)) expectEnd = true;
       else if (expectEnd) { if (line === "END") finish(); }
       else if (line.startsWith("OK:") || line.startsWith("ERR:")) finish();
     }});

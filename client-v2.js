@@ -62,6 +62,10 @@
       <h2>Bluetooth keyboards <button id="bt-refresh" style="float:right">Refresh</button></h2>
       <p id="bt-nobt" class="muted" hidden>This board has no radio — Bluetooth is unavailable.</p>
       <p id="bt-status" class="muted">…</p>
+      <p id="bt-active" hidden style="margin:.2rem 0 .6rem">
+        <button id="bt-disc-now">Disconnect current keyboard</button>
+        <span class="muted" style="font-size:.8rem"> — frees the slot for pairing another</span>
+      </p>
       <div id="bt-passkey" class="banner warn" hidden style="font-size:1.05rem"></div>
       <p class="muted" style="margin:.6rem 0 .2rem">Paired</p>
       <table id="bt-paired"><tbody></tbody></table>
@@ -890,6 +894,10 @@
     const p = (st[0] || "").split(",");   // OK:BT,<has>,<state>,<found>,<bonded>
     $("bt-status").textContent =
       p[1] === "1" ? `radio on · ${p[2] || "?"} · ${p[4] || 0} bonded` : "unavailable";
+    // A keyboard can be connected WITHOUT a bond (devices that refuse
+    // pairing but accept a plain HID connection) — it then has no row in
+    // the paired table, so offer a disconnect here whenever a link is up.
+    $("bt-active").hidden = p[2] !== "connected";
     const lines = await send("CMD:BT_LIST");
     const tb = $("bt-paired").querySelector("tbody");
     tb.innerHTML = "";
@@ -921,6 +929,7 @@
   }
 
   $("bt-refresh").onclick = refreshBt;
+  $("bt-disc-now").onclick = async () => { await send("CMD:BT_DISCONNECT"); refreshBt(); };
   $("bt-scan").onclick = async () => {
     $("bt-nearby").querySelector("tbody").innerHTML = "";
     await send("CMD:BT_SCAN");

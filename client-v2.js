@@ -900,17 +900,20 @@
       n++;
       const [, idx, addr, name, connected, auto] = m;
       const tr = document.createElement("tr");
+      // Actions wrap inside the cell — a nowrap row overflowed the panel.
       tr.innerHTML =
-        `<td>${connected === "1" ? "●" : "○"} <b>${btesc(name)}</b>
-           <span class="muted">${btesc(addr)}</span></td>
-         <td style="text-align:right;white-space:nowrap">
-           ${connected === "1"
-             ? `<button data-bt="disconnect">Disconnect</button>`
-             : `<button data-bt="connect" data-i="${idx}">Connect</button>`}
-           <button data-bt="rename" data-i="${idx}" data-n="${btesc(name)}">Rename</button>
-           <button data-bt="forget" data-i="${idx}" data-n="${btesc(name)}">Forget</button>
-           <label style="display:inline"><input type="checkbox" data-bt="auto"
-             data-i="${idx}" ${auto === "1" ? "checked" : ""}> auto</label>
+        `<td>${connected === "1" ? "●" : "○"} <b>${btesc(name)}</b><br>
+           <span class="muted" style="font-size:.8rem">${btesc(addr)}</span></td>
+         <td>
+           <div style="display:flex;gap:.35rem;flex-wrap:wrap;justify-content:flex-end;align-items:center">
+             ${connected === "1"
+               ? `<button data-bt="disconnect">Disconnect</button>`
+               : `<button data-bt="connect" data-i="${idx}">Connect</button>`}
+             <button data-bt="rename" data-i="${idx}" data-n="${btesc(name)}">Rename</button>
+             <button data-bt="forget" data-i="${idx}" data-n="${btesc(name)}">Forget</button>
+             <label style="white-space:nowrap"><input type="checkbox" data-bt="auto"
+               data-i="${idx}" ${auto === "1" ? "checked" : ""}> auto</label>
+           </div>
          </td>`;
       tb.appendChild(tr);
     }
@@ -947,9 +950,13 @@
     if (cb) { await send(`CMD:BT_AUTO,${cb.dataset.i},${cb.checked ? 1 : 0}`); refreshBt(); }
   });
 
-  $("bt-nearby").addEventListener("click", async (e) => {
+  // Delegate on the whole section: the nearby rows are (re)built from BT:SCAN
+  // events, so binding to the table body alone was fragile.
+  $("bt-section").addEventListener("click", async (e) => {
     const b = e.target.closest("[data-pair]");
-    if (b) await send("CMD:BT_PAIR," + b.dataset.pair);
+    if (!b) return;
+    CLID.log("[ui] pair clicked for scan index " + b.dataset.pair, "dbg");
+    await send("CMD:BT_PAIR," + b.dataset.pair);
   });
 
   // Unsolicited BT: events keep the panel live (doc 04 §4).

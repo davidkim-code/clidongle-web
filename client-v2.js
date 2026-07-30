@@ -892,8 +892,14 @@
     }
     const st = await send("CMD:BT_STATUS");
     const p = (st[0] || "").split(",");   // OK:BT,<has>,<state>,<found>,<bonded>
-    $("bt-status").textContent =
-      p[1] === "1" ? `radio on · ${p[2] || "?"} · ${p[4] || 0} bonded` : "unavailable";
+    const parked = p[2] === "parked-usb";
+    $("bt-status").textContent = p[1] !== "1" ? "unavailable"
+      : parked
+        ? `paused — a USB keyboard is plugged into the dongle (${p[4] || 0} bonded)`
+        : `radio on · ${p[2] || "?"} · ${p[4] || 0} bonded`;
+    // While a USB keyboard is attached, BT stays parked by policy: only one
+    // keyboard source at a time. Unplug it and the watch resumes by itself.
+    $("bt-scan").disabled = parked;
     // A keyboard can be connected WITHOUT a bond (devices that refuse
     // pairing but accept a plain HID connection) — it then has no row in
     // the paired table, so offer a disconnect here whenever a link is up.

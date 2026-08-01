@@ -234,7 +234,7 @@ async function readLoop() {
 // keystroke loopback, raw HID taps, and streamed AI answers (those have their
 // own lineHooks). They can arrive at any moment, including in the middle of an
 // unrelated request/response exchange.
-const UNSOLICITED = /^(BT:|KBD:|HIDRAW:|AIBEGIN|AIDATA:|AIERR:|AIEND)/;
+const UNSOLICITED = /^(BT:|KBD:|HIDRAW:|HKCAP:|AIBEGIN|AIDATA:|AIERR:|AIEND)/;
 
 // Send a command; resolve with its response lines. Lists (OK:MACROS/REMAPS/
 // STATUS/HELP) run until END; single responses end at the first OK:/ERR:.

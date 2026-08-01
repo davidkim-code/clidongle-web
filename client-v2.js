@@ -44,42 +44,48 @@
       <p id="r-empty" class="muted" hidden>No remaps.</p>
     </section>
     <section id="hk-section">
-      <h2>Shortcuts <button id="hk-refresh" style="float:right">Refresh</button></h2>
-      <p class="muted">A shortcut replaces the key you press. <b>Remaps</b> stay separate:
-      a remap swaps one key for another on press <i>and</i> release (so it repeats when held),
-      while a shortcut fires an action once. Where both apply, the shortcut wins.</p>
-      <table id="hk-table"><thead><tr><th>Shortcut</th><th>Does</th><th></th></tr></thead><tbody></tbody></table>
-      <p id="hk-empty" class="muted" hidden>No shortcuts.</p>
+      <h2>Hotkeys <button id="hk-refresh" style="float:right">Refresh</button></h2>
+      <p class="muted">A hotkey replaces the key you press: press it, and the dongle sends
+      something else instead. <b>Remaps</b> (above) are different — a remap swaps one key for
+      another on press <i>and</i> release, so it still repeats when you hold it. A hotkey fires
+      once. If a key has both, the hotkey wins.</p>
+      <table id="hk-table"><thead><tr><th>When I press</th><th>The dongle does</th><th></th></tr></thead><tbody></tbody></table>
+      <p id="hk-empty" class="muted" hidden>No hotkeys yet.</p>
 
-      <div class="row" style="margin-top:.6rem">
-        <button id="hk-capture" class="primary">Record on keyboard…</button>
-        <span class="muted">Press the shortcut, then press what it should do.</span>
+      <div class="row" style="margin-top:.6rem;align-items:center">
+        <button id="hk-capture" class="primary">Record a hotkey</button>
+        <span id="hk-cap-status" class="muted">Click, then press the keys on your keyboard.</span>
       </div>
 
-      <h3 style="margin-top:1rem">Or build one here</h3>
-      <div class="row">
-        <div><label>Shortcut</label>
-          <span id="hk-tmods"></span>
-          <select id="hk-tkey"></select>
+      <details id="hk-manual" style="margin-top:.8rem">
+        <summary class="muted">Add one manually instead</summary>
+        <div class="row" style="margin-top:.5rem">
+          <div>
+            <label>When I press</label>
+            <div id="hk-tmods" style="margin-bottom:.25rem"></div>
+            <select id="hk-tkey"></select>
+          </div>
         </div>
-      </div>
-      <div class="row">
-        <div><label>Action</label>
-          <select id="hk-kind">
-            <option value="chord">Send keys</option>
-            <option value="media">Media key</option>
-            <option value="macro">Run macro</option>
-            <option value="rec">Play recording</option>
-          </select>
+        <div class="row">
+          <div>
+            <label>The dongle does</label>
+            <select id="hk-kind">
+              <option value="chord">Send other keys</option>
+              <option value="media">Press a media key</option>
+              <option value="macro">Run a macro</option>
+              <option value="rec">Play a recording</option>
+            </select>
+          </div>
+          <div id="hk-chord-wrap">
+            <label>Keys to send</label>
+            <div id="hk-amods" style="margin-bottom:.25rem"></div>
+            <select id="hk-akey"></select>
+          </div>
+          <div id="hk-media-wrap" hidden><label>Media key</label><select id="hk-media"></select></div>
+          <div id="hk-name-wrap" hidden><label>Name</label><input id="hk-name" placeholder="macro trigger / recording name"></div>
         </div>
-        <div id="hk-chord-wrap">
-          <span id="hk-amods"></span>
-          <select id="hk-akey"></select>
-        </div>
-        <div id="hk-media-wrap" hidden><select id="hk-media"></select></div>
-        <div id="hk-name-wrap" hidden><input id="hk-name" placeholder="macro trigger / recording name"></div>
-        <button id="hk-add" class="primary">Add shortcut</button>
-      </div>
+        <div class="row"><button id="hk-add">Add hotkey</button></div>
+      </details>
     </section>
     <section id="wifi-section">
       <h2>WiFi <button id="w-refresh" style="float:right">Refresh</button></h2>
@@ -1134,20 +1140,38 @@
     $("hk-name-wrap").hidden = !(k === "macro" || k === "rec");
   };
   $("hk-refresh").onclick = () => refreshHotkeys();
-  $("hk-capture").onclick = async () => {
-    const r = (await send("CMD:HOTKEY_CAPTURE"))[0] || "";
-    if (r.startsWith("ERR:")) { alert(r.slice(4)); return; }
-    alert("On your keyboard: press the shortcut, then press what it should do.\n\n"
-        + "Click into a text field first — the dongle types its prompts there.\n"
-        + "Esc cancels; it gives up after 60 seconds.");
-    for (let i = 0; i < 30; i++) {
-      await new Promise((r2) => setTimeout(r2, 1000));
-      const before = $("hk-table").querySelector("tbody").children.length;
-      await refreshHotkeys();
-      if ($("hk-table").querySelector("tbody").children.length !== before) break;
+  // Capture reports over the wire (HKCAP: lines) rather than typing prompts,
+  // so a capture started here stays here: no switching to a text editor, and no
+  // config,save to remember afterwards.
+  function hkStatus(text, cls) {
+    const el = $("hk-cap-status");
+    el.textContent = text;
+    el.className = cls || "muted";
+  }
+  CLID.onLine(async (line) => {
+    if (!line.startsWith("HKCAP:")) return;
+    const parts = line.slice(6).split(",");
+    const tag = parts[0];
+    if (tag === "WAIT") {
+      hkStatus(parts[1] === "trigger"
+        ? "Press the hotkey now… (Esc cancels)"
+        : "Now press what it should do… (Esc cancels)");
+    } else if (tag === "TRIG") {
+      hkStatus(`Got ${hkCombo(+parts[1], +parts[2])} — now press what it should do…`);
+    } else if (tag === "DONE") {
+      hkStatus(`Bound ${hkCombo(+parts[1], +parts[2])} → ${hkCombo(+parts[3], +parts[4])}`, "rx");
+      await send("CMD:CONFIG_SAVE");     // saved for you; no CLI step needed
+      refreshHotkeys();
+    } else if (tag === "CANCEL") {
+      hkStatus("Cancelled.");
+    } else if (tag === "FAIL") {
+      hkStatus("⚠ " + parts.slice(1).join(","), "err");
     }
-    await send("CMD:CONFIG_SAVE");
-    refreshHotkeys();
+  });
+  $("hk-capture").onclick = async () => {
+    hkStatus("Starting…");
+    const r = (await send("CMD:HOTKEY_CAPTURE"))[0] || "";
+    if (r.startsWith("ERR:")) hkStatus("⚠ " + r.slice(4), "err");
   };
   $("hk-add").onclick = async () => {
     const tm = hkReadMods("hk-tm"), tk = $("hk-tkey").value;

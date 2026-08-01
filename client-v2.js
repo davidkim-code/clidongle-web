@@ -147,9 +147,6 @@
           <div><label>Response timeout (5–120s)</label><input id="ai-timeout" type="number" min="5" max="120" placeholder="30"></div>
           <button id="ai-timeout-set">Set timeout</button>
         </div>
-        <p id="ai-bt-lock" class="muted" hidden><b>Browser mode is required right now:</b>
-        a Bluetooth keyboard is connected, and running the dongle's own Wi-Fi at
-        the same time crashes it. Disconnect the BT keyboard to re-enable device mode.</p>
         <p class="muted">One API key (above) is used by both modes. Device mode: the key stays AES-256 encrypted on the device, which makes the request over Wi-Fi. Browser mode: this page fetches the key from the dongle and calls Gemini directly, then the dongle types the answer — works with no wireless module.</p>
       </details>
       <details style="margin-top:.5rem">
@@ -678,29 +675,6 @@
     $("ai-timeout").value = "";
     refreshAI();
   };
-  // On-device AI drives WiFi + TLS on the same radio as the BLE link, and that
-  // combination WEDGES the firmware — the dongle drops off USB and the watchdog
-  // reboots it (AI/future/bluetooth-keyboard/12-phase6-coexistence.md). The
-  // firmware refuses the call, but the UI should never ask for it in the first
-  // place: force browser mode for as long as a BT keyboard is connected.
-  let aiViaBeforeBt = null;
-  function setAiRadioLock(btConnected) {
-    const sel = $("ai-via");
-    if (!sel || CLID.hasWifi === false) return;   // no-WiFi boards are already locked
-    const dev = sel.querySelector('option[value="device"]');
-    const note = $("ai-bt-lock");
-    if (btConnected) {
-      if (aiViaBeforeBt === null) aiViaBeforeBt = sel.value;
-      sel.value = "browser";
-      if (dev) dev.disabled = true;
-      if (note) note.hidden = false;
-    } else {
-      if (dev) dev.disabled = false;
-      if (note) note.hidden = true;
-      if (aiViaBeforeBt !== null) { sel.value = aiViaBeforeBt; aiViaBeforeBt = null; }
-    }
-  }
-
   // On a board without Wi-Fi, force browser mode (on-device AI isn't possible)
   // and grey out the whole WiFi panel — there's no radio to configure.
   if (CLID.hasWifi === false) {
@@ -1108,7 +1082,6 @@
     // pairing but accept a plain HID connection) — it then has no row in
     // the paired table, so offer a disconnect here whenever a link is up.
     $("bt-active").hidden = p[2] !== "connected";
-    setAiRadioLock(p[2] === "connected");
     const lines = await send("CMD:BT_LIST");
     const tb = $("bt-paired").querySelector("tbody");
     tb.innerHTML = "";

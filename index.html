@@ -219,13 +219,22 @@ async function readLoop() {
         rxBuffer = rxBuffer.slice(nl + 1);
         if (line.startsWith("[")) { logLine(line, "dbg"); continue; }  // device debug
         logLine(line, line.startsWith("ERR:") ? "err" : "rx");
-        if (waiters.length) waiters[0].onLine(line);
+        // Unsolicited lines are NOT command responses. Feeding them to the
+        // pending waiter is how "models/1" happened: refreshAI() read a stray
+        // line as CMD:AI_STATUS and took field 2 as the model name.
+        if (!UNSOLICITED.test(line) && waiters.length) waiters[0].onLine(line);
         for (const h of lineHooks) h(line);   // async listeners (e.g. AI answers)
       }
     }
   } catch (_) { /* cancelled */ }
   finally { try { reader.releaseLock(); } catch (_) {} }
 }
+
+// Lines the device emits on its own initiative — Bluetooth events, the CDC
+// keystroke loopback, raw HID taps, and streamed AI answers (those have their
+// own lineHooks). They can arrive at any moment, including in the middle of an
+// unrelated request/response exchange.
+const UNSOLICITED = /^(BT:|KBD:|HIDRAW:|AIBEGIN|AIDATA:|AIERR:|AIEND)/;
 
 // Send a command; resolve with its response lines. Lists (OK:MACROS/REMAPS/
 // STATUS/HELP) run until END; single responses end at the first OK:/ERR:.
@@ -235,15 +244,36 @@ function sendCommand(cmd) {
   return new Promise((resolve) => {
     const lines = [];
     let expectEnd = false, settled = false;
-    const timer = setTimeout(finish, 2500);
-    function finish() {
+    const timer = setTimeout(() => finish(true), 2500);
+    function finish(timedOut) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      waiters.shift();
+      if (timedOut) {
+        // Do NOT drop the waiter: a slow reply is still on its way, and if the
+        // next command claimed it every response after this one would be off by
+        // one — silently answering each request with the previous one's data.
+        // Leave it in place to absorb the late lines until its terminator.
+        const w = waiters[0];
+        w.orphan = true;
+        // ...but not forever: if that reply never lands, the orphan would sit
+        // at the head of the queue and swallow every future response.
+        setTimeout(() => {
+          const i = waiters.indexOf(w);
+          if (i >= 0) waiters.splice(i, 1);
+        }, 5000);
+      } else {
+        waiters.shift();
+      }
       resolve(lines);
     }
-    waiters.push({ onLine: (line) => {
+    waiters.push({ onLine: function (line) {
+      if (this.orphan) {                 // swallowing a late reply
+        if (line === "END" || line.startsWith("OK:") || line.startsWith("ERR:")) {
+          waiters.shift();
+        }
+        return;
+      }
       lines.push(line);
       if (/^OK:(MACROS|REMAPS|STATUS|HELP|WIFILIST|WIFISCAN|PWLIST|AITLIST|AITGET|AIMODELLIST|NOTELIST|NOTEGET|RECLIST|EXPORT|BTLIST)\b/.test(line)) expectEnd = true;
       else if (expectEnd) { if (line === "END") finish(); }

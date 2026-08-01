@@ -485,6 +485,11 @@
   let aiTimeout = 30, aiModelName = "gemini-flash-lite-latest";
   async function refreshAI() {
     const st = (await send("CMD:AI_STATUS"))[0] || "";   // OK:AI,<0|1>,<model>,<tpl>,<timeout>
+    // Only parse a line that really is an AI_STATUS reply. Trusting whatever
+    // arrived is how the model name became "15" and then "1" — a stray or
+    // mismatched line whose third field happened to be a digit, which then went
+    // into the request URL as models/1.
+    if (!st.startsWith("OK:AI,")) return;
     const p = st.split(",");
     const model = p[2] || "", tpl = p[3] || "";
     aiTimeout = parseInt(p[4], 10) || 30;
@@ -604,7 +609,15 @@
     stopTimer();
     aiTimer = setInterval(() => { left = Math.max(0, left - 1); tick(); }, 1000);
     if ($("ai-via").value === "browser") askBrowser(prompt);
-    else send("CMD:AI_ASK," + esc(prompt));                  // escaped: multi-turn context has newlines
+    else {
+      // The ack matters: a refusal (e.g. "browser mode only while a BT keyboard
+      // is connected") came back here and was thrown away, so the UI sat on
+      // "…waiting…" for the whole timeout instead of saying what was wrong.
+      send("CMD:AI_ASK," + esc(prompt)).then((r) => {   // escaped: context has newlines
+        const first = (r && r[0]) || "";
+        if (first.startsWith("ERR:")) finishBrowser("⚠ " + first.slice(4), true);
+      });
+    }
   }
 
   function finishBrowser(text, isErr) {

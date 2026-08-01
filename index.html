@@ -267,6 +267,10 @@ function sendCommand(cmd) {
       }
       resolve(lines);
     }
+    // NOTE: every command that answers with DATA: lines + END must have its
+    // OK:<NAME> listed in the regex below. Omitting one (HKLIST, once) ends the
+    // response at the first line, and the stray DATA: lines are then delivered
+    // to whatever command runs next — hotkeys turning up in the WiFi table.
     waiters.push({ onLine: function (line) {
       if (this.orphan) {                 // swallowing a late reply
         if (line === "END" || line.startsWith("OK:") || line.startsWith("ERR:")) {
@@ -275,7 +279,7 @@ function sendCommand(cmd) {
         return;
       }
       lines.push(line);
-      if (/^OK:(MACROS|REMAPS|STATUS|HELP|WIFILIST|WIFISCAN|PWLIST|AITLIST|AITGET|AIMODELLIST|NOTELIST|NOTEGET|RECLIST|EXPORT|BTLIST)\b/.test(line)) expectEnd = true;
+      if (/^OK:(MACROS|REMAPS|STATUS|HELP|WIFILIST|WIFISCAN|PWLIST|AITLIST|AITGET|AIMODELLIST|NOTELIST|NOTEGET|RECLIST|EXPORT|BTLIST|HKLIST)\b/.test(line)) expectEnd = true;
       else if (expectEnd) { if (line === "END") finish(); }
       else if (line.startsWith("OK:") || line.startsWith("ERR:")) finish();
     }});

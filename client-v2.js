@@ -43,6 +43,44 @@
       <table id="r-table"><thead><tr><th>From</th><th>To</th></tr></thead><tbody></tbody></table>
       <p id="r-empty" class="muted" hidden>No remaps.</p>
     </section>
+    <section id="hk-section">
+      <h2>Shortcuts <button id="hk-refresh" style="float:right">Refresh</button></h2>
+      <p class="muted">A shortcut replaces the key you press. <b>Remaps</b> stay separate:
+      a remap swaps one key for another on press <i>and</i> release (so it repeats when held),
+      while a shortcut fires an action once. Where both apply, the shortcut wins.</p>
+      <table id="hk-table"><thead><tr><th>Shortcut</th><th>Does</th><th></th></tr></thead><tbody></tbody></table>
+      <p id="hk-empty" class="muted" hidden>No shortcuts.</p>
+
+      <div class="row" style="margin-top:.6rem">
+        <button id="hk-capture" class="primary">Record on keyboard…</button>
+        <span class="muted">Press the shortcut, then press what it should do.</span>
+      </div>
+
+      <h3 style="margin-top:1rem">Or build one here</h3>
+      <div class="row">
+        <div><label>Shortcut</label>
+          <span id="hk-tmods"></span>
+          <select id="hk-tkey"></select>
+        </div>
+      </div>
+      <div class="row">
+        <div><label>Action</label>
+          <select id="hk-kind">
+            <option value="chord">Send keys</option>
+            <option value="media">Media key</option>
+            <option value="macro">Run macro</option>
+            <option value="rec">Play recording</option>
+          </select>
+        </div>
+        <div id="hk-chord-wrap">
+          <span id="hk-amods"></span>
+          <select id="hk-akey"></select>
+        </div>
+        <div id="hk-media-wrap" hidden><select id="hk-media"></select></div>
+        <div id="hk-name-wrap" hidden><input id="hk-name" placeholder="macro trigger / recording name"></div>
+        <button id="hk-add" class="primary">Add shortcut</button>
+      </div>
+    </section>
     <section id="wifi-section">
       <h2>WiFi <button id="w-refresh" style="float:right">Refresh</button></h2>
       <p id="w-nowifi" class="muted" hidden>This board has no wireless module — WiFi is unavailable. (AI still works via <b>Browser</b> mode below.)</p>
@@ -102,13 +140,16 @@
           <button id="ai-key-clear">Clear</button>
         </div>
         <div class="row">
-          <div><label>Model</label><input id="ai-model" placeholder="gemini-2.5-flash"></div>
+          <div><label>Model</label><input id="ai-model" placeholder="gemini-flash-lite-latest"></div>
           <button id="ai-model-set">Set model</button>
         </div>
         <div class="row">
           <div><label>Response timeout (5–120s)</label><input id="ai-timeout" type="number" min="5" max="120" placeholder="30"></div>
           <button id="ai-timeout-set">Set timeout</button>
         </div>
+        <p id="ai-bt-lock" class="muted" hidden><b>Browser mode is required right now:</b>
+        a Bluetooth keyboard is connected, and running the dongle's own Wi-Fi at
+        the same time crashes it. Disconnect the BT keyboard to re-enable device mode.</p>
         <p class="muted">One API key (above) is used by both modes. Device mode: the key stays AES-256 encrypted on the device, which makes the request over Wi-Fi. Browser mode: this page fetches the key from the dongle and calls Gemini directly, then the dongle types the answer — works with no wireless module.</p>
       </details>
       <details style="margin-top:.5rem">
@@ -125,7 +166,7 @@
         <table id="aim-table"><tbody></tbody></table>
         <p id="aim-empty" class="muted" hidden>No saved models.</p>
         <div class="row">
-          <div><input id="aim-name" placeholder="name (e.g. gemini-2.5-flash)"></div>
+          <div><input id="aim-name" placeholder="name (e.g. gemini-flash-lite-latest)"></div>
           <div><input id="aim-url" placeholder="optional custom URL"></div>
           <button id="aim-add" class="primary">Add</button>
         </div>
@@ -135,7 +176,8 @@
       <h2>Passwords <button id="pw-refresh" style="float:right">Refresh</button></h2>
       <p id="pw-status" class="muted">…</p>
       <div id="pw-master-row" class="row">
-        <div><label id="pw-master-label">Master password</label><input id="pw-master" type="password" placeholder="master…"></div>
+        <div><label id="pw-master-label">Master password</label>
+        <small id="pw-master-hint">Typed on your keyboard, never over USB serial.</small></div>
         <button id="pw-master-btn" class="primary">Unlock</button>
         <button id="pw-forgot" hidden>Forgot? Reset vault</button>
       </div>
@@ -440,13 +482,13 @@
     return head + turns.map(turnLine).join("\n") + tail;
   }
 
-  let aiTimeout = 30, aiModelName = "gemini-2.5-flash";
+  let aiTimeout = 30, aiModelName = "gemini-flash-lite-latest";
   async function refreshAI() {
     const st = (await send("CMD:AI_STATUS"))[0] || "";   // OK:AI,<0|1>,<model>,<tpl>,<timeout>
     const p = st.split(",");
     const model = p[2] || "", tpl = p[3] || "";
     aiTimeout = parseInt(p[4], 10) || 30;
-    aiModelName = model || "gemini-2.5-flash";
+    aiModelName = model || "gemini-flash-lite-latest";
     $("ai-status").textContent = (p[1] === "1" ? "key set" : "no key set") +
                                  (model ? " · " + model : "") +
                                  (tpl ? " · template: " + tpl : "") +
@@ -623,6 +665,29 @@
     $("ai-timeout").value = "";
     refreshAI();
   };
+  // On-device AI drives WiFi + TLS on the same radio as the BLE link, and that
+  // combination WEDGES the firmware — the dongle drops off USB and the watchdog
+  // reboots it (AI/future/bluetooth-keyboard/12-phase6-coexistence.md). The
+  // firmware refuses the call, but the UI should never ask for it in the first
+  // place: force browser mode for as long as a BT keyboard is connected.
+  let aiViaBeforeBt = null;
+  function setAiRadioLock(btConnected) {
+    const sel = $("ai-via");
+    if (!sel || CLID.hasWifi === false) return;   // no-WiFi boards are already locked
+    const dev = sel.querySelector('option[value="device"]');
+    const note = $("ai-bt-lock");
+    if (btConnected) {
+      if (aiViaBeforeBt === null) aiViaBeforeBt = sel.value;
+      sel.value = "browser";
+      if (dev) dev.disabled = true;
+      if (note) note.hidden = false;
+    } else {
+      if (dev) dev.disabled = false;
+      if (note) note.hidden = true;
+      if (aiViaBeforeBt !== null) { sel.value = aiViaBeforeBt; aiViaBeforeBt = null; }
+    }
+  }
+
   // On a board without Wi-Fi, force browser mode (on-device AI isn't possible)
   // and grey out the whole WiFi panel — there's no radio to configure.
   if (CLID.hasWifi === false) {
@@ -710,13 +775,27 @@
     }
     $("pw-empty").hidden = rows.length > 0;
   }
+  // The master is never sent over the wire: we ask the dongle to prompt for it
+  // on the physical keyboard, where it is echoed as '*' and goes straight into
+  // the vault. Anything on this machine can open the serial port, so a
+  // CMD:PW_SETMASTER,<master> would hand the master to every such process.
   $("pw-master-btn").onclick = async () => {
-    const m = $("pw-master").value;
-    if (!m) return;
     const unlock = $("pw-master-btn").textContent === "Unlock";
-    const r = (await send((unlock ? "CMD:PW_UNLOCK," : "CMD:PW_SETMASTER,") + m))[0] || "";
-    $("pw-master").value = "";
-    if (r.startsWith("ERR:")) alert(r.slice(4));
+    const r = (await send(unlock ? "CMD:PW_UNLOCK" : "CMD:PW_SETMASTER"))[0] || "";
+    if (r.startsWith("ERR:")) { alert(r.slice(4)); return; }
+    CLID.log("[pw] type the master on your keyboard, then Enter", "dbg");
+    alert("Click into a text field (this page's notes box is fine), then type "
+        + (unlock ? "your master password" : "a new master password")
+        + " on the keyboard and press Enter.\n\nIt shows as * and is never "
+        + "sent over USB serial. Esc cancels.");
+    // The dongle answers immediately; the vault state changes only once the
+    // user has finished typing, so poll for a while instead of once.
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const st = (await send("CMD:PW_STATUS"))[0] || "";
+      const p = st.split(",");
+      if (p.length >= 3 && (p[2] === "1" || (!unlock && p[1] === "1"))) break;
+    }
     refreshPw();
   };
   $("pw-lock").onclick = async () => { await send("CMD:PW_LOCK"); refreshPw(); };
@@ -808,6 +887,21 @@
   $("c-reboot").onclick = () => send("CMD:REBOOT");
   $("c-export").onclick = async () => {
     const lines = dataLines(await send("CMD:EXPORT"));
+    // The vault arrives as pwvault.0..N followed by pwvault.end=<bytes>. A
+    // dropped line would otherwise be written to disk as a perfectly
+    // innocent-looking backup that cannot restore your passwords, so refuse
+    // to save an incomplete one.
+    const chunks = lines.filter((l) => /^pwvault\.\d+=/.test(l));
+    const endLine = lines.find((l) => /^pwvault\.end=/.test(l));
+    if (chunks.length || endLine) {
+      const indices = chunks.map((l) => parseInt(l.slice(8), 10)).sort((a, b) => a - b);
+      const contiguous = indices.every((v, i) => v === i);
+      if (!endLine || !contiguous || !indices.length) {
+        alert("Export looks incomplete — the password vault did not arrive in full, "
+            + "so this backup was NOT saved. Try again.");
+        return;
+      }
+    }
     const blob = new Blob([lines.join("\n") + "\n"], { type: "text/plain" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -822,11 +916,14 @@
     e.target.value = "";
     if (!confirm(`Import settings from "${file.name}"? It merges into the current settings.`)) return;
     const lines = (await file.text()).split(/\r?\n/).filter((l) => l.trim());
+    // Vault chunks must arrive in order; the dongle stages them and only
+    // replaces the vault when pwvault.end matches the staged length, so a
+    // truncated file leaves the existing vault untouched.
     for (const l of lines) await send("CMD:IMPORT_LINE," + l);
     await send("CMD:CONFIG_SAVE");
     refreshMacros(); refreshRemaps(); refreshWifi();
     refreshAI(); refreshTemplates(); refreshModels();
-    refreshNotes(); refreshPw(); refreshStorage();
+    refreshNotes(); refreshPw(); refreshStorage(); refreshHotkeys();
     alert(`Imported ${lines.length} settings.`);
   };
   $("raw-send").onclick = () => { const v = $("raw").value.trim(); if (v) send(v); };
@@ -883,6 +980,100 @@
       (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   }
 
+
+  //-- Shortcuts (hotkeys) ----------------------------------------------------
+  // Keys are chosen from a list rather than typed as keycodes: nobody knows
+  // that CapsLock is 0x39. The same names are used for the trigger and the
+  // action, so the two pickers stay consistent.
+  const HK_KEYS = [
+    ["Space", 0x2C], ["Enter", 0x28], ["Escape", 0x29], ["Tab", 0x2B],
+    ["Backspace", 0x2A], ["CapsLock", 0x39],
+    ["Up", 0x52], ["Down", 0x51], ["Left", 0x50], ["Right", 0x4F],
+  ];
+  for (let i = 0; i < 26; i++) HK_KEYS.push([String.fromCharCode(65 + i), 0x04 + i]);
+  for (let i = 1; i <= 9; i++)  HK_KEYS.push([String(i), 0x1D + i]);
+  HK_KEYS.push(["0", 0x27]);
+  for (let i = 1; i <= 12; i++) HK_KEYS.push(["F" + i, 0x39 + i]);
+
+  const HK_MEDIA = [
+    ["Volume up", 0xE9], ["Volume down", 0xEA], ["Mute", 0xE2],
+    ["Play/Pause", 0xCD], ["Next track", 0xB5], ["Previous track", 0xB6],
+    ["Stop", 0xB7],
+  ];
+  const HK_MODS = [["Ctrl", 0x01], ["Shift", 0x02], ["Alt", 0x04], ["Cmd/Win", 0x08]];
+
+  function hkFillKeys(sel) {
+    sel.innerHTML = "";
+    for (const [name, code] of HK_KEYS) {
+      const o = document.createElement("option");
+      o.value = String(code); o.textContent = name;
+      sel.appendChild(o);
+    }
+  }
+  function hkFillMods(host, idPrefix) {
+    host.innerHTML = "";
+    for (const [name, bit] of HK_MODS) {
+      const id = idPrefix + bit;
+      const l = document.createElement("label");
+      l.style.marginRight = ".5rem";
+      l.innerHTML = `<input type="checkbox" id="${id}" value="${bit}"> ${name}`;
+      host.appendChild(l);
+    }
+  }
+  function hkReadMods(idPrefix) {
+    let m = 0;
+    for (const [, bit] of HK_MODS) {
+      const el = $(idPrefix + bit);
+      if (el && el.checked) m |= bit;
+    }
+    return m;
+  }
+  function hkKeyName(code) {
+    const hit = HK_KEYS.find((k) => k[1] === code);
+    return hit ? hit[0] : "0x" + code.toString(16);
+  }
+  function hkModsName(m) {
+    return HK_MODS.filter(([, b]) => m & b).map(([n]) => n).join("+");
+  }
+  function hkCombo(mods, key) {
+    const m = hkModsName(mods);
+    return (m ? m + "+" : "") + hkKeyName(key);
+  }
+
+  async function refreshHotkeys() {
+    const lines = await send("CMD:HOTKEY_LIST");
+    const tb = $("hk-table").querySelector("tbody");
+    tb.innerHTML = "";
+    let n = 0;
+    for (const l of lines) {
+      const m = l.match(/^DATA:hk,(\d+),(\d+),(\w+),(.*)$/);
+      if (!m) continue;
+      n++;
+      const tmods = +m[1], tkey = +m[2], kind = m[3], rest = m[4];
+      let does = rest;
+      if (kind === "chord") {
+        const [am, ak] = rest.split(",").map(Number);
+        does = "Send " + hkCombo(am, ak);
+      } else if (kind === "media") {
+        const hit = HK_MEDIA.find((x) => x[1] === +rest);
+        does = "Media: " + (hit ? hit[0] : rest);
+      } else if (kind === "macro") { does = "Macro " + rest; }
+      else { does = "Recording " + rest; }
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td><code>${hkCombo(tmods, tkey)}</code></td><td>${does}</td><td></td>`;
+      const del = document.createElement("button");
+      del.textContent = "Delete";
+      del.onclick = async () => {
+        await send(`CMD:HOTKEY_DELETE,${tmods},${tkey}`);
+        await send("CMD:CONFIG_SAVE");
+        refreshHotkeys();
+      };
+      tr.children[2].appendChild(del);
+      tb.appendChild(tr);
+    }
+    $("hk-empty").hidden = n > 0;
+  }
+
   async function refreshBt() {
     if (CLID.hasBt === false) {
       $("bt-nobt").hidden = false;
@@ -904,6 +1095,7 @@
     // pairing but accept a plain HID connection) — it then has no row in
     // the paired table, so offer a disconnect here whenever a link is up.
     $("bt-active").hidden = p[2] !== "connected";
+    setAiRadioLock(p[2] === "connected");
     const lines = await send("CMD:BT_LIST");
     const tb = $("bt-paired").querySelector("tbody");
     tb.innerHTML = "";
@@ -936,6 +1128,58 @@
 
   $("bt-refresh").onclick = refreshBt;
   $("bt-disc-now").onclick = async () => { await send("CMD:BT_DISCONNECT"); refreshBt(); };
+
+  hkFillKeys($("hk-tkey"));
+  hkFillKeys($("hk-akey"));
+  hkFillMods($("hk-tmods"), "hk-tm");
+  hkFillMods($("hk-amods"), "hk-am");
+  {
+    const sel = $("hk-media");
+    for (const [name, usage] of HK_MEDIA) {
+      const o = document.createElement("option");
+      o.value = String(usage); o.textContent = name;
+      sel.appendChild(o);
+    }
+  }
+  $("hk-kind").onchange = () => {
+    const k = $("hk-kind").value;
+    $("hk-chord-wrap").hidden = k !== "chord";
+    $("hk-media-wrap").hidden = k !== "media";
+    $("hk-name-wrap").hidden = !(k === "macro" || k === "rec");
+  };
+  $("hk-refresh").onclick = () => refreshHotkeys();
+  $("hk-capture").onclick = async () => {
+    const r = (await send("CMD:HOTKEY_CAPTURE"))[0] || "";
+    if (r.startsWith("ERR:")) { alert(r.slice(4)); return; }
+    alert("On your keyboard: press the shortcut, then press what it should do.\n\n"
+        + "Click into a text field first — the dongle types its prompts there.\n"
+        + "Esc cancels; it gives up after 60 seconds.");
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r2) => setTimeout(r2, 1000));
+      const before = $("hk-table").querySelector("tbody").children.length;
+      await refreshHotkeys();
+      if ($("hk-table").querySelector("tbody").children.length !== before) break;
+    }
+    await send("CMD:CONFIG_SAVE");
+    refreshHotkeys();
+  };
+  $("hk-add").onclick = async () => {
+    const tm = hkReadMods("hk-tm"), tk = $("hk-tkey").value;
+    const kind = $("hk-kind").value;
+    let cmd = `CMD:HOTKEY_ADD,${tm},${tk},${kind},`;
+    if (kind === "chord")      cmd += `${hkReadMods("hk-am")},${$("hk-akey").value}`;
+    else if (kind === "media") cmd += $("hk-media").value;
+    else {
+      const nm = $("hk-name").value.trim();
+      if (!nm) { alert("Enter the macro trigger or recording name."); return; }
+      cmd += nm;
+    }
+    const r = (await send(cmd))[0] || "";
+    if (r.startsWith("ERR:")) { alert(r.slice(4)); return; }
+    await send("CMD:CONFIG_SAVE");
+    $("hk-name").value = "";
+    refreshHotkeys();
+  };
   $("bt-scan").onclick = async () => {
     $("bt-nearby").querySelector("tbody").innerHTML = "";
     await send("CMD:BT_SCAN");
@@ -1009,4 +1253,5 @@
   refreshPw();
   refreshRec();
   refreshBt();
+  refreshHotkeys();
 })();
